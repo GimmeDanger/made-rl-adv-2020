@@ -72,6 +72,9 @@ class BlackjackEnv(gym.Env):
         self.observation_space = spaces.Tuple(
             (spaces.Discrete(32), spaces.Discrete(11), spaces.Discrete(2))
         )
+        self.all_states = list(product(range(4, 32), range(1, 11), (True, False)))
+        self.all_states_mapping = { state : id for id, state in enumerate(self.all_states)}
+        self.all_actions = [0, 1]
         self.seed()
 
         # Flag to payout 1.5 on a "natural" blackjack win, like casino rules
@@ -131,7 +134,61 @@ class BlackjackEnv(gym.Env):
     def reset(self):
         self.dealer = draw_hand(self.np_random)
         self.player = draw_hand(self.np_random)
-        self.all_states = list(product(range(4, 33), range(1, 11), (True, False)))
-        self.all_states_mapping = { state : id for id, state in enumerate(self.all_states)}
-        self.all_actions = [0, 1]
         return self._get_obs()
+
+
+class BlackjackDoubleEnv(BlackjackEnv):
+
+    def __init__(self, natural=False, sab=False):
+        self.action_space = spaces.Discrete(3)
+        self.observation_space = spaces.Tuple(
+            (spaces.Discrete(32), spaces.Discrete(11), spaces.Discrete(2))
+        )
+        self.all_states = list(product(range(4, 32), range(1, 11), (True, False)))
+        self.all_states_mapping = { state : id for id, state in enumerate(self.all_states)}
+        self.all_actions = [0, 1, 2]
+
+        self.seed()
+
+        # Flag to payout 1.5 on a "natural" blackjack win, like casino rules
+        # Ref: http://www.bicyclecards.com/how-to-play/blackjack/
+        self.natural = natural
+
+        # Flag for full agreement with the (Sutton and Barto, 2018) definition. Overrides self.natural
+        self.sab = sab
+
+
+    def step(self, action):
+        assert self.action_space.contains(action)
+        if action == 2: # double: add a card to players hand and finish game, reward will be doubled
+            _, reward, done, _ = self.step(action=1) # hit
+            if not done:
+                _, reward, done, _ = self.step(action=0) # stick
+            reward *= 2
+
+        elif action == 1: # hit: add a card to players hand and return
+            self.player.append(draw_card(self.np_random))
+            if is_bust(self.player):
+                done = True
+                reward = -1.0
+            else:
+                done = False
+                reward = 0.0
+
+        else:  # stick: play out the dealers hand, and score
+            done = True
+            while sum_hand(self.dealer) < 17:
+                self.dealer.append(draw_card(self.np_random))
+            reward = cmp(score(self.player), score(self.dealer))
+            if self.sab and is_natural(self.player) and not is_natural(self.dealer):
+                # Player automatically wins. Rules consistent with S&B
+                reward = 1.0
+            elif (
+                not self.sab
+                and self.natural
+                and is_natural(self.player)
+                and reward == 1.0
+            ):
+                # Natural gives extra points, but doesn't autowin. Legacy implementation
+                reward = 1.5
+        return self._get_obs(), reward, done, {}
