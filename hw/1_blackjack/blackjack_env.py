@@ -10,35 +10,20 @@ def cmp(a, b):
 # 1 = Ace, 2-10 = Number cards, Jack/Queen/King = 10
 deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10]
 
-
-def draw_card(np_random):
-    return int(np_random.choice(deck))
-
-
-def draw_hand(np_random):
-    return [draw_card(np_random), draw_card(np_random)]
-
-
-def usable_ace(hand):  # Does this hand have a usable ace?
-    return 1 in hand and sum(hand) + 10 <= 21
-
-
-def sum_hand(hand):  # Return current hand total
-    if usable_ace(hand):
-        return sum(hand) + 10
-    return sum(hand)
-
-
-def is_bust(hand):  # Is this hand a bust?
-    return sum_hand(hand) > 21
-
-
-def score(hand):  # What is the score of this hand (0 if bust)
-    return 0 if is_bust(hand) else sum_hand(hand)
-
-
-def is_natural(hand):  # Is this hand a natural blackjack?
-    return sorted(hand) == [1, 10]
+# https://en.wikipedia.org/wiki/Blackjack#Card_counting
+# Система "Половинки"
+counting_score = {
+    1: -2,
+    2: 1,
+    3: 2,
+    4: 2,
+    5: 3,
+    6: 2,
+    7: 1,
+    8: 0,
+    9: -1,
+    10: -2,
+}
 
 
 class BlackjackEnv(gym.Env):
@@ -88,11 +73,34 @@ class BlackjackEnv(gym.Env):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
+    def draw_card(self, np_random):
+        return int(np_random.choice(deck))
+
+    def draw_hand(self, np_random):
+        return [self.draw_card(np_random), self.draw_card(np_random)]
+
+    def usable_ace(self, hand):  # Does this hand have a usable ace?
+        return 1 in hand and sum(hand) + 10 <= 21
+
+    def sum_hand(self, hand):  # Return current hand total
+        if self.usable_ace(hand):
+            return sum(hand) + 10
+        return sum(hand)
+
+    def is_bust(self, hand):  # Is this hand a bust?
+        return self.sum_hand(hand) > 21
+    
+    def score(self, hand):  # What is the score of this hand (0 if bust)
+        return 0 if self.is_bust(hand) else self.sum_hand(hand)
+
+    def is_natural(self, hand):  # Is this hand a natural blackjack?
+        return sorted(hand) == [1, 10]
+
     def step(self, action):
         assert self.action_space.contains(action)
         if action:  # hit: add a card to players hand and return
-            self.player.append(draw_card(self.np_random))
-            if is_bust(self.player):
+            self.player.append(self.draw_card(self.np_random))
+            if self.is_bust(self.player):
                 done = True
                 reward = -1.0
             else:
@@ -100,16 +108,16 @@ class BlackjackEnv(gym.Env):
                 reward = 0.0
         else:  # stick: play out the dealers hand, and score
             done = True
-            while sum_hand(self.dealer) < 17:
-                self.dealer.append(draw_card(self.np_random))
-            reward = cmp(score(self.player), score(self.dealer))
-            if self.sab and is_natural(self.player) and not is_natural(self.dealer):
+            while self.sum_hand(self.dealer) < 17:
+                self.dealer.append(self.draw_card(self.np_random))
+            reward = cmp(self.score(self.player), self.score(self.dealer))
+            if self.sab and self.is_natural(self.player) and not self.is_natural(self.dealer):
                 # Player automatically wins. Rules consistent with S&B
                 reward = 1.0
             elif (
                 not self.sab
                 and self.natural
-                and is_natural(self.player)
+                and self.is_natural(self.player)
                 and reward == 1.0
             ):
                 # Natural gives extra points, but doesn't autowin. Legacy implementation
@@ -117,7 +125,7 @@ class BlackjackEnv(gym.Env):
         return self._get_obs(), reward, done, {}
 
     def _get_obs(self):
-        return (sum_hand(self.player), self.dealer[0], usable_ace(self.player))
+        return (self.sum_hand(self.player), self.dealer[0], self.usable_ace(self.player))
 
     def get_obs_id(self, obs):
         return self.all_states_mapping[obs]
@@ -132,8 +140,8 @@ class BlackjackEnv(gym.Env):
         return len(self.all_actions)
 
     def reset(self):
-        self.dealer = draw_hand(self.np_random)
-        self.player = draw_hand(self.np_random)
+        self.dealer = self.draw_hand(self.np_random)
+        self.player = self.draw_hand(self.np_random)
         return self._get_obs()
 
 
@@ -167,8 +175,8 @@ class BlackjackDoubleEnv(BlackjackEnv):
             reward *= 2
 
         elif action == 1: # hit: add a card to players hand and return
-            self.player.append(draw_card(self.np_random))
-            if is_bust(self.player):
+            self.player.append(self.draw_card(self.np_random))
+            if self.is_bust(self.player):
                 done = True
                 reward = -1.0
             else:
@@ -177,18 +185,77 @@ class BlackjackDoubleEnv(BlackjackEnv):
 
         else:  # stick: play out the dealers hand, and score
             done = True
-            while sum_hand(self.dealer) < 17:
-                self.dealer.append(draw_card(self.np_random))
-            reward = cmp(score(self.player), score(self.dealer))
-            if self.sab and is_natural(self.player) and not is_natural(self.dealer):
+            while self.sum_hand(self.dealer) < 17:
+                self.dealer.append(self.draw_card(self.np_random))
+            reward = cmp(self.score(self.player), self.score(self.dealer))
+            if self.sab and self.is_natural(self.player) and not self.is_natural(self.dealer):
                 # Player automatically wins. Rules consistent with S&B
                 reward = 1.0
             elif (
                 not self.sab
                 and self.natural
-                and is_natural(self.player)
+                and self.is_natural(self.player)
                 and reward == 1.0
             ):
                 # Natural gives extra points, but doesn't autowin. Legacy implementation
                 reward = 1.5
         return self._get_obs(), reward, done, {}
+
+
+class BlackjackCountingEnv(BlackjackDoubleEnv):
+
+    def __init__(self, natural=False, sab=False, num_decks=4, reshuffle_limit=15):
+
+        self.counting_max = 11 * num_decks
+        self.action_space = spaces.Discrete(3)
+        self.observation_space = spaces.Tuple(
+            (
+                spaces.Discrete(32),
+                spaces.Discrete(11),
+                spaces.Discrete(2),
+                spaces.Box(-self.counting_max, self.counting_max, shape=(1, 1))
+            )
+        )
+        self.all_states = list(product(range(4, 32), range(1, 11), (True, False)))
+        self.all_states = [(*S, cnt) for S, cnt in product(self.all_states, range(-self.counting_max, self.counting_max))]
+        self.all_states_mapping = { state : id for id, state in enumerate(self.all_states)}
+        self.all_actions = [0, 1, 2]
+
+        self.seed()
+
+        # Flag to payout 1.5 on a "natural" blackjack win, like casino rules
+        # Ref: http://www.bicyclecards.com/how-to-play/blackjack/
+        self.natural = natural
+
+        # Flag for full agreement with the (Sutton and Barto, 2018) definition. Overrides self.natural
+        self.sab = sab
+
+        # Active decks for card drawing
+        self.num_decks = num_decks
+
+        # Minimal cards in deck to start reshuffling
+        self.reshuffle_limit = reshuffle_limit
+
+        self.reshuffle_decks()
+
+    def draw_card(self, np_random):
+        card = int(self.decks.pop(np_random.choice(len(self.decks))))
+        self.count += counting_score[card]
+        return card
+
+    def reshuffle_decks(self):
+        # Stored decks
+        self.decks = deck * self.num_decks
+        # Stored count
+        self.count = 0
+
+    def _get_obs(self):
+        return (self.sum_hand(self.player), self.dealer[0],
+                self.usable_ace(self.player), self.count)
+
+    def reset(self):
+        if len(self.decks) < self.reshuffle_limit:
+            self.reshuffle_decks()
+        self.dealer = self.draw_hand(self.np_random)
+        self.player = self.draw_hand(self.np_random)
+        return self._get_obs()
